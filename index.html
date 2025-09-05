@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hippocampus Finance Agent (MVP)</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f6f7fb}
+  header{padding:14px 16px;background:#101828;color:#fff}
+  .wrap{max-width:960px;margin:0 auto;padding:16px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .chip{background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:8px 12px;font-size:14px}
+  .btn{padding:10px 12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff;cursor:pointer}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .chat{background:#fff;border:1px solid #e5e7eb;border-radius:12px;height:52vh;overflow:auto;padding:16px}
+  .row{display:flex;gap:8px;margin-top:12px}
+  .msg{max-width:70%;padding:10px 12px;border-radius:10px;margin:6px 0}
+  .user{background:#e9f5ff;align-self:flex-end}
+  .bot{background:#f2f4f7}
+  .controls{position:sticky;bottom:0;background:#fff;padding:10px;border:1px solid #e5e7eb;border-radius:12px;display:flex;gap:8px;margin-top:12px}
+  select,input[type=text],button{padding:10px;border:1px solid #d0d5dd;border-radius:10px}
+  input[type=text]{flex:1}
+  .small{color:#667085;font-size:12px}
+</style>
+<!-- Supabase SDK -->
+
+</head>
+<script defer src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script defer src="./app.js"></script>
+
+<body>
+<header><strong>Hippocampus — Finance Agent (MVP)</strong></header>
+<div class="wrap">
+  <div class="bar">
+    <span class="small">Household: <code>home-001</code></span>
+    <span id="tot-me" class="chip">Your month: ₹0</span>
+    <span id="tot-p1" class="chip">Partner 1: ₹0</span>
+    <span id="tot-p2" class="chip">Partner 2: ₹0</span>
+    <span id="tot-hh" class="chip">Household: ₹0</span>
+    <button id="seed" class="btn">Seed demo data</button>
+    <button id="csv" class="btn">Download CSV</button>
+    <button id="upload" class="btn">Upload screenshot</button>
+
+  </div>
+
+  <div id="chat" class="chat"></div>
+
+  <div class="controls">
+    <select id="member">
+      <option value="Partner 1">Partner 1</option>
+      <option value="Partner 2">Partner 2</option>
+    </select>
+    <input id="input" type="text" placeholder="Type an expense or a question… e.g., ‘Spent ₹350 on groceries’">
+    <button id="send">Send</button>
+  </div>
+
+  <div class="small">Tip: log with an amount + hint like groceries/food/fuel/transport/rent/bills/shopping/entertainment/health/other.</div>
+</div>
