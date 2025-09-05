@@ -23,7 +23,7 @@ exports.handler = async function (event) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5',
         messages: [
           { role: 'system', content: `
 You are a finance assistant. Read the receipt / UPI payment screenshot and return JSON:
@@ -138,3 +138,4 @@ If unsure, still fill best guess. Output ONLY JSON.
     return { statusCode: 500, body: `Server error: ${e.message}` };
   }
 };
+
