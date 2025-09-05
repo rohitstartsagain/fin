@@ -45,7 +45,7 @@ If unsure, still fill best guess. Output ONLY JSON.
           }
         ],
         temperature: 0.1,
-        max_tokens: 300
+        max_completion_tokens: 300,
       })
     });
 
@@ -138,4 +138,5 @@ If unsure, still fill best guess. Output ONLY JSON.
     return { statusCode: 500, body: `Server error: ${e.message}` };
   }
 };
+
 
