@@ -166,16 +166,24 @@ async function handleUpload() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64, memberName })
       });
-      const parsed = await resp.json();
+
+      // PARSE SAFELY
+      const raw = await resp.text();
+      let data = null;
+      try { data = JSON.parse(raw); } catch { /* leave null */ }
+
       if (!resp.ok) {
-        addMsg(`OCR error: ${parsed || 'unknown'}`);
+        addMsg(`OCR error: ${raw || 'unknown'}`);
         return;
       }
+
+      // use parsed JSON
+      const parsed = data || {};
 
       // 4) Insert into Supabase using existing schema
       const hh = await householdId();
       const mid = await memberId(memberName);
-      const { amount, expense_date, category, description, currency='INR' } = parsed;
+      const { amount, expense_date, category, description, currency = 'INR' } = parsed;
 
       const { error } = await sb.from('expenses').insert({
         household_id: hh,
@@ -190,7 +198,7 @@ async function handleUpload() {
       });
       if (error) throw error;
 
-      addMsg(`Logged from screenshot: ₹${Number(amount||0).toFixed(2)} · ${category} · ${expense_date}`);
+      addMsg(`Logged from screenshot: ₹${Number(amount || 0).toFixed(2)} · ${category} · ${expense_date}`);
       await updateTotals();
     } catch (e) {
       console.error(e);
@@ -198,3 +206,4 @@ async function handleUpload() {
     }
   };
 }
+
