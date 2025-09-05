@@ -39,11 +39,11 @@ Return ONLY JSON.`;
           {
             role: 'user',
             content: [
-              { type: 'input_text', text: `Today is ${today}. Extract fields.` },
-              { type: 'input_image', image_url: `data:image/png;base64,${imageBase64}` }
-            ]
+          { type: 'text', text: `Today is ${today}. Extract fields as JSON only.` },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } }
+                     ]
           }
-        ],
+                  ],
         temperature: 0.1,
         max_tokens: 300
       })
@@ -55,14 +55,18 @@ Return ONLY JSON.`;
     }
     const data = await resp.json();
 
-    // Try to parse JSON from the model
+    // Try to parse JSON from the model (handles string OR array content)
     let parsed;
     try {
-      const content = data.choices?.[0]?.message?.content || '{}';
-      parsed = JSON.parse(content);
-    } catch (_) {
-      parsed = {};
-    }
+        const content = data.choices?.[0]?.message?.content;
+        const textOut = typeof content === 'string'
+          ? content
+          : (Array.isArray(content) ? content.map(p => p?.text ?? '').join(' ') : '{}');
+        parsed = JSON.parse(textOut || '{}');
+      } catch (_) {
+        parsed = {};
+      }
+
 
     // Minimal normalization & defaults
     const amount = Number(parsed.amount || 0);
@@ -87,3 +91,4 @@ Return ONLY JSON.`;
     return { statusCode: 500, body: `Server error: ${e.message}` };
   }
 };
+
