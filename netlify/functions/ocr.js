@@ -1,4 +1,7 @@
 // netlify/functions/ocr.js
+// Requires site env var: OPENAI_API_KEY
+// Works with GPT-5 (vision) and returns robust JSON with regex fallbacks.
+
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method not allowed' };
@@ -9,13 +12,30 @@ exports.handler = async function (event) {
     if (!imageBase64) {
       return { statusCode: 400, body: 'Missing imageBase64' };
     }
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return { statusCode: 500, body: 'OPENAI_API_KEY not set' };
     }
 
-    const today = new Date().toISOString().slice(0,10);
+    const today = new Date().toISOString().slice(0, 10);
 
+    // ---- Choose model here ----
+    const MODEL = 'gpt-5';        // or 'gpt-5-mini' (cheaper) or 'gpt-4o' (if needed)
+
+    const prompt = `
+You are a finance assistant. Read the receipt / UPI payment screenshot and return a single JSON object:
+{
+  "amount": number,                // INR amount (no commas)
+  "expense_date": "yyyy-mm-dd",    // transaction date
+  "category": "Groceries|Food & Dining|Fuel|Transport|Rent|Bills & Utilities|Shopping|Entertainment|Health|Other",
+  "description": "3-6 words",      // merchant/payee or short label
+  "raw_text": "all visible text from the image (optional but helpful)"
+}
+If unsure, still fill your best guess. Output ONLY JSON.
+`;
+
+    // ---- OpenAI call (GPT-5-safe params) ----
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -23,39 +43,36 @@ exports.handler = async function (event) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-5',
+        model: MODEL,
+        // GPT-5 accepts max_completion_tokens (NOT max_tokens). Omit temperature/top_p/penalties.
+        max_completion_tokens: 300,
+        response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: `
-You are a finance assistant. Read the receipt / UPI payment screenshot and return JSON:
-{
-  "amount": number,           // in INR (no commas)
-  "expense_date": "yyyy-mm-dd",
-  "category": "Groceries|Food & Dining|Fuel|Transport|Rent|Bills & Utilities|Shopping|Entertainment|Health|Other",
-  "description": "3-6 words",
-  "raw_text": "all visible text from the image"
-}
-If unsure, still fill best guess. Output ONLY JSON.
-`},
+          { role: 'system', content: prompt },
           {
             role: 'user',
             content: [
-              { type: 'text', text: `Today is ${today}. If rupee symbol ₹ or "Rs" shows, it's INR. Prefer merchant/payee name in description.` },
+              { type: 'text', text: `Today is ${today}. Prefer merchant/payee name in description.` },
               { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } }
             ]
           }
-        ],
-        temperature: 0.1,
-        max_completion_tokens: 300,
+        ]
       })
     });
 
+    const raw = await resp.text();
     if (!resp.ok) {
-      const t = await resp.text();
-      return { statusCode: 502, body: `OpenAI error: ${t}` };
+      // Return a readable error to the UI (your app already shows this nicely)
+      return {
+        statusCode: resp.status,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: { message: 'OpenAI error', detail: raw } })
+      };
     }
-    const data = await resp.json();
 
-    // Try to parse JSON from the model (handles string OR array content)
+    const data = JSON.parse(raw);
+
+    // ---- Parse JSON content safely (string or array parts) ----
     let parsed;
     try {
       const content = data.choices?.[0]?.message?.content;
@@ -67,58 +84,62 @@ If unsure, still fill best guess. Output ONLY JSON.
       parsed = {};
     }
 
-    // ---------- post-process & fallbacks ----------
-    const raw = (parsed.raw_text || '').toString();
+    // ---------- Post-process & fallbacks ----------
+    const rawText = (parsed.raw_text || '').toString();
 
-    // amount: look for ₹ or Rs patterns if missing/zero
+    // Amount: find ₹ or Rs patterns if model missed/zero
     let amount = Number(parsed.amount || 0);
     if (!amount || isNaN(amount)) {
-      const m1 = raw.match(/₹\s*([\d,]+(?:\.\d{1,2})?)/i) || raw.match(/rs\.?\s*([\d,]+(?:\.\d{1,2})?)/i);
-      if (m1?.[1]) amount = Number(m1[1].replace(/,/g, ''));
+      const m = rawText.match(/₹\s*([\d,]+(?:\.\d{1,2})?)/i) || rawText.match(/\brs\.?\s*([\d,]+(?:\.\d{1,2})?)/i);
+      if (m?.[1]) amount = Number(m[1].replace(/,/g, ''));
     }
 
-    // date: accept “29 August 2025” or “29 Aug 2025” or 2025-08-29 / 29-08-2025
-    let expense_date = (parsed.expense_date || '').slice(0,10);
+    // Date: accept “29 August 2025”, “29 Aug 2025”, dd-mm-yyyy, dd/mm/yyyy, or yyyy-mm-dd
+    let expense_date = (parsed.expense_date || '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(expense_date)) {
       const months = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
       let d = null;
 
-      // 29 August 2025
-      const long = raw.match(/\b(\d{1,2})\s+([A-Za-z]{3,})[a-z]*\s+(\d{4})\b/);
+      const long = rawText.match(/\b(\d{1,2})\s+([A-Za-z]{3,})[a-z]*\s+(\d{4})\b/); // 29 August 2025 / 29 Aug 2025
       if (long) {
         const day = Number(long[1]);
         const mon = months[long[2].slice(0,3).toLowerCase()];
         const yr  = Number(long[3]);
-        if (mon) d = new Date(Date.UTC(yr, mon-1, day));
+        if (mon) d = new Date(Date.UTC(yr, mon - 1, day));
       }
 
-      // 29-08-2025 or 29/08/2025
-      const dmy = raw.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b/);
-      if (!d && dmy) d = new Date(Date.UTC(Number(dmy[3]), Number(dmy[2])-1, Number(dmy[1])));
+      const dmy = rawText.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b/); // 29-08-2025 / 29/08/2025
+      if (!d && dmy) d = new Date(Date.UTC(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1])));
 
-      // 2025-08-29
-      const iso = raw.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
-      if (!d && iso) d = new Date(Date.UTC(Number(iso[1]), Number(iso[2])-1, Number(iso[3])));
+      const iso = rawText.match(/\b(\d{4})-(\d{2})-(\d{2})\b/); // 2025-08-29
+      if (!d && iso) d = new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
 
       if (d && !isNaN(d)) expense_date = d.toISOString().slice(0,10);
     }
     if (!expense_date) expense_date = today;
 
-    // category: simple merchant-based hint if model didn’t give one
+    // Category: quick merchant keyword hints if model returned Other
     let category = parsed.category || 'Other';
     if (category === 'Other') {
-      const lower = raw.toLowerCase();
+      const lower = rawText.toLowerCase();
       if (/\b(bakery|baking|cafe|restaurant|hotel|food|eatery)\b/.test(lower)) category = 'Food & Dining';
+      else if (/\b(petrol|diesel|fuel)\b/.test(lower)) category = 'Fuel';
+      else if (/\b(uber|ola|cab|bus|train|metro|transport)\b/.test(lower)) category = 'Transport';
+      else if (/\b(amazon|flipkart|myntra|shopping)\b/.test(lower)) category = 'Shopping';
+      else if (/\b(rent)\b/.test(lower)) category = 'Rent';
+      else if (/\b(electric|internet|wifi|bills?)\b/.test(lower)) category = 'Bills & Utilities';
+      else if (/\b(netflix|spotify|prime|entertainment)\b/.test(lower)) category = 'Entertainment';
+      else if (/\b(hospital|medicine|pharma|health)\b/.test(lower)) category = 'Health';
     }
 
-    // description: prefer merchant/payee line
-    let description = parsed.description || '';
+    // Description: prefer "Paid to ..." or merchant-like line
+    let description = (parsed.description || '').trim();
     if (!description) {
-      const paidTo = raw.match(/paid\s+to\s+(.+)\b/i);
-      description = paidTo?.[1]?.trim().slice(0, 60) || 'Receipt import';
+      const paidTo = rawText.match(/paid\s+to\s+(.+?)$/im);
+      description = (paidTo?.[1] || '').trim().slice(0, 60);
+      if (!description) description = 'Receipt import';
     }
 
-    // finalized fields
     const out = {
       memberName,
       amount: Number(amount || 0),
@@ -134,9 +155,11 @@ If unsure, still fill best guess. Output ONLY JSON.
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(out)
     };
-  } catch (e) {
-    return { statusCode: 500, body: `Server error: ${e.message}` };
+
+  } catch (err) {
+    return {
+      statusCode: 500,
+      body: `Server error: ${err?.message || err}`
+    };
   }
 };
-
-
