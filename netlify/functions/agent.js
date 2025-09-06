@@ -1,87 +1,89 @@
 // netlify/functions/agent.js
-// Requires: OPENAI_API_KEY env var + netlify/functions/prompt.txt
-// Input:  { memberName?: "Partner 1"|"Partner 2", text?: string, imageBase64?: string }
-// Output: { mode:"expense", expense:{...}, memberName } OR { mode:"query", query:{...}, memberName } OR { needs_clarification:true, message:"..." }
+const fs = require('fs');
+const path = require('path');
 
-exports.handler = async function (event) {
+function loadSystemPrompt() {
+  const fromEnv = (process.env.FIN_AGENT_SYSTEM_PROMPT || '').trim();
+  if (fromEnv) return fromEnv;
+  const p = path.join(__dirname, 'prompt.txt');
+  return fs.readFileSync(p, 'utf8');
+}
+const SYSTEM_PROMPT = loadSystemPrompt();
+
+exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method not allowed' };
   }
 
-  // --- load prompt from file (server-side; not in app.js) ---
-  const fs = require('fs');
-  const path = require('path');
-  const systemPrompt = fs.readFileSync(path.join(__dirname, 'prompt.txt'), 'utf8');
-
   try {
-    const { memberName = 'Partner 1', text = '', imageBase64 = null } = JSON.parse(event.body || '{}');
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return { statusCode: 500, body: 'OPENAI_API_KEY not set' };
+    const { userText = '', memberName = 'Partner 1' } = JSON.parse(event.body || '{}');
+    if (!process.env.OPENAI_API_KEY) {
+      return { statusCode: 500, body: JSON.stringify({ error: 'OPENAI_API_KEY not set' }) };
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const content = [
-      { type: 'text', text: `Today is ${today}. Member: ${memberName}. Decide EXPENSE vs QUERY; output JSON only.` }
-    ];
-    if (text) content.push({ type: 'text', text });
-    if (imageBase64) content.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } });
 
+    // Force JSON: response_format: { type: 'json_object' }
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({
-        model: 'gpt-5',                          // or 'gpt-5-mini' if you prefer
-        max_completion_tokens: 400,
+        model: 'gpt-4o-mini',
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content }
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content:
+              `TODAY=${today}\nMEMBER=${memberName}\n\n` +
+              `User says: """${userText}"""\n\n` +
+              `Return a JSON object with one of these:\n` +
+              `{"mode":"expense","expense":{"amount":number,"currency":"INR","expense_date":"yyyy-mm-dd","category":string,"description":string}}\n` +
+              `or {"mode":"query","start":"yyyy-mm-dd","end":"yyyy-mm-dd","category":null|Category,"scope":"me|household"}\n` +
+              `or {"mode":"needs_clarification","message":string}\n` +
+              `Return ONLY JSON.`
+          }
         ]
       })
     });
 
     const raw = await resp.text();
     if (!resp.ok) {
-      return { statusCode: resp.status, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: raw }) };
+      // Pass model/server error back to UI so you see it
+      return { statusCode: resp.status, body: raw };
     }
 
-    const data = JSON.parse(raw);
-    const msg = data.choices?.[0]?.message?.content;
-    const textOut = typeof msg === 'string'
-      ? msg
-      : (Array.isArray(msg) ? msg.map(p => p?.text ?? '').join(' ') : '{}');
-
-    let parsed;
-    try { parsed = JSON.parse(textOut || '{}'); } catch { parsed = {}; }
-
-    // normalize outputs a bit & echo memberName so client can attribute correctly
-    if (parsed.mode === 'expense' && parsed.expense) {
-      const e = parsed.expense;
-      if (!e.amount || !e.date || !e.category) {
-        return ok({ needs_clarification: true, message: "Need amount, date, and category to log this. Please confirm or edit." });
-      }
-      e.currency = e.currency || 'INR';
-      e.source = e.source || (imageBase64 ? 'image' : (text ? 'text' : 'sms'));
-      return ok({ mode: 'expense', expense: e, memberName });
+    let content;
+    try {
+      const data = JSON.parse(raw);
+      content = data?.choices?.[0]?.message?.content || '{}';
+    } catch {
+      // If OpenAI body wasn’t JSON for some reason
+      content = raw;
     }
 
-    if (parsed.mode === 'query' && parsed.query) {
-      return ok({ mode: 'query', query: parsed.query, memberName });
+    let out;
+    try { out = JSON.parse(content); } catch { out = null; }
+
+    if (!out || !out.mode) {
+      out = { mode: 'needs_clarification', message: 'Could not parse JSON reply.' };
     }
 
-    if (parsed.needs_clarification) {
-      return ok({ needs_clarification: true, message: parsed.message || "Please clarify." });
+    // Normalize expense
+    if (out.mode === 'expense' && out.expense) {
+      const e = out.expense;
+      if (e.amount != null) e.amount = Number(e.amount);
+      if (!e.currency) e.currency = 'INR';
+      if (!e.expense_date) e.expense_date = today;
+      if (!e.category) e.category = 'Other';
+      if (!e.description) e.description = userText;
     }
 
-    return ok({ needs_clarification: true, message: "I couldn't parse that. Is it an expense or a query?" });
-
+    return { statusCode: 200, body: JSON.stringify(out) };
   } catch (err) {
-    return { statusCode: 500, body: `Server error: ${err?.message || err}` };
-  }
-
-  function ok(obj) {
-    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) };
+    return { statusCode: 500, body: JSON.stringify({ error: String(err && err.message || err) }) };
   }
 };
