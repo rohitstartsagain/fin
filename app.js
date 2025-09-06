@@ -1,5 +1,4 @@
 // === CONFIG: fill these two ===
-
 const SUPABASE_URL  = "https://rfwklnklxasgbhzyjchu.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmd2tsbmtseGFzZ2JoenlqY2h1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwNjQ2ODAsImV4cCI6MjA3MjY0MDY4MH0.CgsiLkKMq9cNpIXk-ThdDpo5WwNUWq-sjUq1f6QFuXU";
 // ===============================
@@ -78,66 +77,63 @@ addMsg("Hi! Log an expense like “Spent ₹350 on groceries” or ask “How mu
 async function onSend(){
   const text=input.value.trim(); if(!text) return;
   const memberName=memberSel.value; addMsg(text,'user'); input.value='';
- try {
-  // 1) log user message (you already have this part above)
-  const hh  = await householdId();
-  const mid = await memberId(memberName);
-  await sb.from('messages').insert({
-    household_id: hh, member_id: mid, role: 'user', content: text
-  });
 
-  // 2) Ask the agent what to do
-  const agent = await callAgent(text, memberName);
-  // agent => { mode, expense?, query?, needs_clarification? }
+  try {
+    // 1) Log user message
+    const hh  = await householdId();
+    const mid = await memberId(memberName);
+    await sb.from('messages').insert({
+      household_id: hh, member_id: mid, role: 'user', content: text
+    });
 
-  if (agent.mode === 'needs_clarification') {
-    addMsg(agent.message || "I need a bit more detail (amount/date/category).");
-    return;
-  }
+    // 2) Ask the server-side agent what to do
+    const agent = await callAgent(text, memberName);
+    // agent => { mode, expense?, query?, needs_clarification? }
 
-  if (agent.mode === 'query') {
-    // { start, end, category (nullable), scope: 'me'|'household' }
-    await runQueryAndReply(agent, memberName);
-    return;
-  }
-
-  if (agent.mode === 'expense') {
-    const e = agent.expense || {};
-    const preview = `Log ₹${Number(e.amount||0).toFixed(2)} · ${e.category || 'Other'} · ${e.expense_date || '(today)'} ?`;
-    // simple confirmation for MVP
-    const ok = window.confirm(preview);
-    if (!ok) {
-      addMsg("Okay, not logged.");
+    if (agent.mode === 'needs_clarification') {
+      addMsg(agent.message || "I need a bit more detail (amount/date/category).");
       return;
     }
 
-    const { error } = await sb.from('expenses').insert({
-      household_id: hh,
-      member_id: mid,
-      expense_date: e.expense_date,
-      amount: e.amount,
-      currency: e.currency || 'INR',
-      category: e.category || 'Other',
-      description: e.description || text,
-      source: 'text',
-      raw_text: text
-    });
-    if (error) throw error;
+    if (agent.mode === 'query') {
+      // { start, end, category (nullable), scope: 'me'|'household' }
+      await runQueryAndReply(agent, memberName);
+      return;
+    }
 
-    addMsg(`Logged: ₹${Number(e.amount||0).toFixed(2)} · ${e.category || 'Other'} · ${e.expense_date}`);
-    await updateTotals();
-    return;
+    if (agent.mode === 'expense') {
+      const e = agent.expense || {};
+      const preview = `Log ₹${Number(e.amount||0).toFixed(2)} · ${e.category || 'Other'} · ${e.expense_date || '(today)'} ?`;
+      const ok = window.confirm(preview);
+      if (!ok) {
+        addMsg("Okay, not logged.");
+        return;
+      }
+
+      const { error } = await sb.from('expenses').insert({
+        household_id: hh,
+        member_id: mid,
+        expense_date: e.expense_date,
+        amount: e.amount,
+        currency: e.currency || 'INR',
+        category: e.category || 'Other',
+        description: e.description || text,
+        source: 'text',
+        raw_text: text
+      });
+      if (error) throw error;
+
+      addMsg(`Logged: ₹${Number(e.amount||0).toFixed(2)} · ${e.category || 'Other'} · ${e.expense_date}`);
+      await updateTotals();
+      return;
+    }
+
+    // fallback
+    addMsg("Sorry, I couldn't understand that. Try again?");
+  } catch (e) {
+    console.error(e);
+    addMsg(`Oops, something went wrong: ${e.message || e}`);
   }
-
-  // fallback if agent mode is unknown
-  addMsg("Sorry, I couldn't understand that. Try again?");
-
-} catch (e) {
-  console.error(e);
-  addMsg(`Oops, something went wrong: ${e.message || e}`);
-}
-
-  catch(e){console.error(e); addMsg("Oops, something went wrong. Open Console.");}
 }
 
 async function updateTotals(){
@@ -182,7 +178,6 @@ async function seedDemo(e){
 }
 
 async function handleUpload() {
-  // 1) Pick a file
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
@@ -190,7 +185,7 @@ async function handleUpload() {
   input.onchange = async () => {
     const file = input.files?.[0];
     if (!file) return;
-    // 2) Convert to base64 (no headers, just the data)
+
     const base64 = await new Promise((res, rej) => {
       const r = new FileReader();
       r.onload = () => res(String(r.result).split(',')[1]);
@@ -200,7 +195,6 @@ async function handleUpload() {
 
     addMsg("Reading screenshot…");
     try {
-      // 3) Call your Netlify function
       const memberName = document.getElementById('member').value;
       const resp = await fetch('/.netlify/functions/ocr', {
         method: 'POST',
@@ -208,20 +202,16 @@ async function handleUpload() {
         body: JSON.stringify({ imageBase64: base64, memberName })
       });
 
-      // PARSE SAFELY
       const raw = await resp.text();
       let data = null;
-      try { data = JSON.parse(raw); } catch { /* leave null */ }
+      try { data = JSON.parse(raw); } catch {}
 
       if (!resp.ok) {
         addMsg(`OCR error: ${raw || 'unknown'}`);
         return;
       }
 
-      // use parsed JSON
       const parsed = data || {};
-
-      // 4) Insert into Supabase using existing schema
       const hh = await householdId();
       const mid = await memberId(memberName);
       const { amount, expense_date, category, description, currency = 'INR' } = parsed;
@@ -261,11 +251,11 @@ async function callAgent(userText, memberName) {
   catch { throw new Error(`Agent returned non-JSON: ${raw}`); }
 
   if (!resp.ok) {
-    // surface the agent's error message if present
     throw new Error(data.error || raw);
   }
-  return data; // {mode:'expense'| 'query' | 'needs_clarification', ...}
+  return data; // {mode:'expense'|'query'|'needs_clarification', ...}
 }
+
 async function runQueryAndReply(q, memberName) {
   let query = sb.from('expenses')
     .select('amount, category, expense_date, member_id')
@@ -286,6 +276,3 @@ async function runQueryAndReply(q, memberName) {
   const cat   = q.category ? ` on ${q.category}` : '';
   addMsg(`Total ${who}${cat}: ₹${total.toFixed(2)} for ${q.start} → ${q.end} (${(data||[]).length} txns).`);
 }
-
-
-
