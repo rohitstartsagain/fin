@@ -246,15 +246,24 @@ async function callAgent(userText, memberName) {
   });
 
   const raw = await resp.text();
+  console.log('[agent] HTTP', resp.status);
+  console.log('[agent] raw:', raw);  // <— add this
+
   let data;
-  try { data = JSON.parse(raw); }
-  catch { throw new Error(`Agent returned non-JSON: ${raw}`); }
+  try {
+    data = JSON.parse(raw);
+    console.log('[agent] parsed:', data); // optional but helpful
+  } catch (e) {
+    console.error('[agent] JSON parse error:', e);
+    throw new Error(`Agent returned non-JSON: ${raw}`);
+  }
 
   if (!resp.ok) {
-    throw new Error(data.error || raw);
+    throw new Error(data?.error || raw);
   }
-  return data; // {mode:'expense'|'query'|'needs_clarification', ...}
+  return data; // { mode: 'expense' | 'query' | 'needs_clarification', ... }
 }
+
 
 async function runQueryAndReply(q, memberName) {
   let query = sb.from('expenses')
@@ -276,3 +285,4 @@ async function runQueryAndReply(q, memberName) {
   const cat   = q.category ? ` on ${q.category}` : '';
   addMsg(`Total ${who}${cat}: ₹${total.toFixed(2)} for ${q.start} → ${q.end} (${(data||[]).length} txns).`);
 }
+
