@@ -1,4 +1,5 @@
 // === CONFIG: fill these two ===
+
 const SUPABASE_URL  = "https://rfwklnklxasgbhzyjchu.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmd2tsbmtseGFzZ2JoenlqY2h1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwNjQ2ODAsImV4cCI6MjA3MjY0MDY4MH0.CgsiLkKMq9cNpIXk-ThdDpo5WwNUWq-sjUq1f6QFuXU";
 // ===============================
@@ -206,4 +207,5 @@ async function handleUpload() {
     }
   };
 }
+
 
