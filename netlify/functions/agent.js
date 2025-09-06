@@ -9,6 +9,25 @@ function loadSystemPrompt() {
   return fs.readFileSync(p, 'utf8');
 }
 const SYSTEM_PROMPT = loadSystemPrompt();
+const fs   = require('fs');
+const path = require('path');
+
+function readPrompt() {
+  const candidates = [
+    // when running in Netlify, __dirname is the function folder
+    path.join(__dirname, 'prompt.txt'),
+    // fallback: absolute path from repo root (useful locally)
+    path.join(process.cwd(), 'netlify', 'functions', 'prompt.txt'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
+    } catch {}
+  }
+  throw new Error('prompt.txt not found in function bundle');
+}
+
+const systemPrompt = readPrompt();
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
